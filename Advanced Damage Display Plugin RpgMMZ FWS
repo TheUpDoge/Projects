@@ -1,0 +1,294 @@
+/*:
+ * @target MZ
+ * @plugindesc v1.3 Advanced damage display with custom fonts and animations
+ * @author Mitchel Friend and Claude 3.5
+ *
+ * @param Default Font Face
+ * @text Default Font Face
+ * @desc Default font face for damage/healing numbers
+ * @default Metal Lord
+ *
+ * @param Default Font Size
+ * @text Default Font Size
+ * @desc Default font size for damage/healing numbers
+ * @type number
+ * @min 12
+ * @max 72
+ * @default 34
+ *
+ * @param Damage Color
+ * @text Damage Text Color
+ * @desc Color for damage numbers (CSS format)
+ * @default #FF0000
+ *
+ * @param Healing Color
+ * @text Healing Text Color
+ * @desc Color for healing numbers (CSS format)
+ * @default #00FF00
+ *
+ * @param Animation Duration
+ * @text Animation Duration (frames)
+ * @desc Duration of the damage/healing number animation
+ * @type number
+ * @min 10
+ * @max 120
+ * @default 60
+ *
+ * @param Custom Fonts
+ * @text Custom Fonts
+ * @type struct<CustomFont>[]
+ * @desc List of custom fonts to load
+ *
+ * @command OpenFontConfig
+ * @text Open Font Configuration
+ * @desc Opens the font configuration menu
+ *
+ * @help FantasyWorldSoulsDamageDisplay.js v1.2
+ *
+ * This plugin enhances the visual display of damage and healing numbers
+ * in combay. It allows for customization
+ * of font, colors, and animation duration.
+ *
+ * Custom Font Setup:
+ * 1. Place your custom font files in the fonts/ folder of your project. The font metal lord can be obtained freely from 1001fonts.com, if not provided along with this script.
+ * 2. Add the font details in the plugin parameters under "Custom Fonts".
+ * 3. The fonts will be loaded automatically when the game starts.
+ *
+ * Use the plugin command "Open Font Configuration" to change settings in-game.
+ * Configuration changes are saved permanently.
+ */
+
+/*~struct~CustomFont:
+ * @param name
+ * @text Font Name
+ * @desc The name to use for this font in-game
+ *
+ * @param filename
+ * @text Font Filename
+ * @desc The filename of the font in the fonts/ folder (include extension)
+ */
+
+(() => {
+  const pluginName = 'FantasyWorldSoulsDamageDisplay';
+  const parameters = PluginManager.parameters(pluginName);
+
+  const config = {
+    fontFace: parameters['Default Font Face'] || 'Metal Lord',
+    fontSize: Number(parameters['Default Font Size'] || 34),
+    damageColor: parameters['Damage Color'] || '#FF0000',
+    healingColor: parameters['Healing Color'] || '#00FF00',
+    animationDuration: Number(parameters['Animation Duration'] || 60),
+  };
+
+  // Load custom fonts
+  const customFonts = JSON.parse(parameters['Custom Fonts'] || '[]').map(font =>
+    JSON.parse(font)
+  );
+  customFonts.forEach(font => {
+    const style = document.createElement('style');
+    style.textContent = `
+            @font-face {
+                font-family: "${font.name}";
+                src: url("fonts/${font.filename}");
+            }
+        `;
+    document.head.appendChild(style);
+  });
+
+  // Configuration Manager
+  class ConfigManager_FWS {
+    static load() {
+      const json = localStorage.getItem('FWSConfig');
+      if (json) {
+        Object.assign(config, JSON.parse(json));
+      }
+    }
+
+    static save() {
+      localStorage.setItem('FWSConfig', JSON.stringify(config));
+    }
+  }
+
+  // Load saved config on game start
+  const _Scene_Boot_start = Scene_Boot.prototype.start;
+  Scene_Boot.prototype.start = function () {
+    _Scene_Boot_start.call(this);
+    ConfigManager_FWS.load();
+  };
+
+  // Font configuration scene
+  class Scene_FontConfig extends Scene_MenuBase {
+    create() {
+      super.create();
+      this._configWindow = new Window_FontConfig(this.configRect());
+      this.addWindow(this._configWindow);
+    }
+
+    configRect() {
+      const ww = 400;
+      const wh = this.calcWindowHeight(6, true);
+      const wx = (Graphics.boxWidth - ww) / 2;
+      const wy = (Graphics.boxHeight - wh) / 2;
+      return new Rectangle(wx, wy, ww, wh);
+    }
+  }
+
+  // Font configuration window
+  class Window_FontConfig extends Window_Command {
+    makeCommandList() {
+      this.addCommand('Font: ' + config.fontFace, 'font');
+      this.addCommand('Size: ' + config.fontSize, 'size');
+      this.addCommand('Damage Color: ' + config.damageColor, 'damageColor');
+      this.addCommand('Healing Color: ' + config.healingColor, 'healingColor');
+      this.addCommand('Save', 'save');
+      this.addCommand('Cancel', 'cancel');
+    }
+
+    drawItem(index) {
+      const rect = this.itemLineRect(index);
+      const align = this.itemTextAlign();
+      this.resetTextColor();
+      this.changePaintOpacity(this.isCommandEnabled(index));
+      this.drawText(this.commandName(index), rect.x, rect.y, rect.width, align);
+    }
+
+    processOk() {
+      const symbol = this.currentSymbol();
+      switch (symbol) {
+        case 'font':
+          this.changeFont();
+          break;
+        case 'size':
+          this.changeSize();
+          break;
+        case 'damageColor':
+          this.changeColor('damage');
+          break;
+        case 'healingColor':
+          this.changeColor('healing');
+          break;
+        case 'save':
+          this.saveConfig();
+          break;
+        case 'cancel':
+          this.cancelConfig();
+          break;
+      }
+    }
+
+    changeFont() {
+      const fonts = ['Default', ...customFonts.map(f => f.name)];
+      const index = (fonts.indexOf(config.fontFace) + 1) % fonts.length;
+      config.fontFace = fonts[index];
+      this.refresh();
+    }
+
+    changeSize() {
+      config.fontSize = (config.fontSize % 72) + 1;
+      this.refresh();
+    }
+
+    changeColor(type) {
+      const colors = [
+        '#FF0000',
+        '#00FF00',
+        '#0000FF',
+        '#FFFF00',
+        '#FF00FF',
+        '#00FFFF',
+      ];
+      const currentColor =
+        type === 'damage' ? config.damageColor : config.healingColor;
+      const index = (colors.indexOf(currentColor) + 1) % colors.length;
+      if (type === 'damage') {
+        config.damageColor = colors[index];
+      } else {
+        config.healingColor = colors[index];
+      }
+      this.refresh();
+    }
+
+    saveConfig() {
+      ConfigManager_FWS.save();
+      console.log('Config saved:', config);
+      SceneManager.pop();
+    }
+
+    cancelConfig() {
+      SceneManager.pop();
+    }
+  }
+
+  // Override the displayDamage method
+  const _Window_BattleLog_displayDamage =
+    Window_BattleLog.prototype.displayDamage;
+  Window_BattleLog.prototype.displayDamage = function (target) {
+    if (target.result().missed || target.result().evaded) {
+      _Window_BattleLog_displayDamage.call(this, target);
+      return;
+    }
+
+    const result = target.result();
+    const damage = result.hpDamage;
+    if (damage > 0) {
+      this.push('performDamage', target);
+    }
+    if (damage < 0) {
+      this.push('performRecovery', target);
+    }
+    this.push('addCustomDamageText', target);
+  };
+
+  Window_BattleLog.prototype.addCustomDamageText = function (target) {
+    const result = target.result();
+    const damage = result.hpDamage;
+    const isHealing = damage < 0;
+
+    const sprite = new Sprite_Damage();
+    sprite.x = target.x;
+    sprite.y = target.y - target.height;
+    sprite.setup(target);
+    this._displayDuration = config.animationDuration;
+
+    // Customize the damage sprite
+    sprite.bitmap.fontFace = config.fontFace;
+    sprite.bitmap.fontSize = config.fontSize;
+    sprite.bitmap.textColor = isHealing
+      ? config.healingColor
+      : config.damageColor;
+
+    // Add custom animation
+    sprite.dy = -1; // Move upwards faster
+    sprite.ry = 0; // Rotation
+    sprite.scale.x = 0.5; // Start small
+    sprite.scale.y = 0.5;
+
+    this.parent.addChild(sprite);
+    this._damages.push(sprite);
+  };
+
+  // Enhance damage sprite animation
+  const _Sprite_Damage_update = Sprite_Damage.prototype.update;
+  Sprite_Damage.prototype.update = function () {
+    _Sprite_Damage_update.call(this);
+    if (this.ry === undefined) this.ry = 0;
+    this.ry += 0.1;
+    this.rotation = Math.sin(this.ry) * 0.2;
+
+    // Grow to full size
+    if (this.scale.x < 1) {
+      this.scale.x += 0.05;
+      this.scale.y += 0.05;
+    }
+
+    // Fade out near the end of animation
+    if (this._duration < 10) {
+      this.opacity -= 25;
+    }
+  };
+
+  // Register plugin command
+  PluginManager.registerCommand(pluginName, 'OpenFontConfig', () => {
+    SceneManager.push(Scene_FontConfig);
+  });
+})();
