@@ -1,0 +1,310 @@
+/*:
+ * @target MZ
+ * @plugindesc v1.4 Advanced damage display with auto font detection
+ * @author Mitchel Friend & Claude 3.5 Sonnet
+ *
+ * @param Default Font Face
+ * @desc Default font face for damage/healing numbers
+ * @default Metal Lord
+ *
+ * @param Default Font Size
+ * @desc Default font size for damage/healing numbers
+ * @type number
+ * @min 12
+ * @max 72
+ * @default 34
+ *
+ * @param Damage Color
+ * @desc Color for damage numbers (CSS format)
+ * @default #FF0000
+ *
+ * @param Healing Color
+ * @desc Color for healing numbers (CSS format)
+ * @default #00FF00
+ *
+ * @param Animation Duration
+ * @desc Duration of the damage/healing number animation (in frames)
+ * @type number
+ * @min 10
+ * @max 120
+ * @default 60
+ *
+ * @command OpenFontConfig
+ * @text Open Font Configuration
+ * @desc Opens the font configuration menu
+ *
+ * @help FantasyWorldSoulsDamageDisplay.js v1.4
+ * 
+ * This plugin enhances the visual display of damage and healing numbers
+ * in combat, styled after Final Fantasy games. It now automatically detects
+ * TTF files in the fonts/ folder and allows usage of system fonts.
+ * 
+ * No additional configuration needed for fonts. Place TTF files in the fonts/ folder
+ * to make them available for use.
+ * 
+ * Use the plugin command "Open Font Configuration" to change settings in-game.
+ */
+
+(() => {
+    const pluginName = "FantasyWorldSoulsDamageDisplay";
+// Extend the Option scene to include our new button
+const _Scene_Options_createOptionsWindow = Scene_Options.prototype.createOptionsWindow;
+Scene_Options.prototype.createOptionsWindow = function() {
+    _Scene_Options_createOptionsWindow.call(this);
+    this._optionsWindow.setHandler('damageConfig', this.commandDamageConfig.bind(this));
+};
+
+Scene_Options.prototype.commandDamageConfig = function() {
+    SceneManager.push(Scene_FontConfig);
+};
+
+// Add our new command to the options window
+const _Window_Options_makeCommandList = Window_Options.prototype.makeCommandList;
+Window_Options.prototype.makeCommandList = function() {
+    _Window_Options_makeCommandList.call(this);
+    this.addCommand('Damage Display Config', 'damageConfig');
+};
+
+// Modify the options window to handle our new command
+const _Window_Options_processOk = Window_Options.prototype.processOk;
+Window_Options.prototype.processOk = function() {
+    const index = this.index();
+    const symbol = this.commandSymbol(index);
+    if (symbol === 'damageConfig') {
+        this.playOkSound();
+        this.updateInputData();
+        this.deactivate();
+        this.callHandler('damageConfig');
+    } else {
+        _Window_Options_processOk.call(this);
+    }
+};
+    const parameters = PluginManager.parameters(pluginName);
+
+    // Function to get available fonts
+    function getAvailableFonts() {
+        const gameFonts = scanGameFonts();
+        const systemFonts = getSystemFonts();
+        return [...gameFonts, ...systemFonts];
+    }
+
+    // Scan for TTF files in the game's fonts folder
+    function scanGameFonts() {
+        const fs = require('fs');
+        const path = require('path');
+        const fontsPath = path.join(process.cwd(), 'fonts');
+        
+        try {
+            return fs.readdirSync(fontsPath)
+                .filter(file => file.toLowerCase().endsWith('.ttf'))
+                .map(file => ({
+                    name: path.basename(file, '.ttf'),
+                    filename: file
+                }));
+        } catch (error) {
+            console.error("Error scanning game fonts:", error);
+            return [];
+        }
+    }
+
+    // Get system fonts (placeholder function)
+    function getSystemFonts() {
+        return ['Arial', 'Verdana', 'Times New Roman', 'Courier'];
+    }
+
+    const availableFonts = getAvailableFonts();
+    
+    // Use the first available font or fall back to a system font
+    const defaultFont = availableFonts.find(font => font.name === parameters['Default Font Face']) || 
+                        availableFonts[0] || 
+                        { name: 'Arial' };
+
+    const config = {
+        fontFace: defaultFont.name,
+        fontSize: Number(parameters['Default Font Size'] || 34),
+        damageColor: parameters['Damage Color'] || '#FF0000',
+        healingColor: parameters['Healing Color'] || '#00FF00',
+        animationDuration: Number(parameters['Animation Duration'] || 60)
+    };
+
+    // Load the selected font if it's a game font
+    if (defaultFont.filename) {
+        const style = document.createElement('style');
+        style.textContent = `
+            @font-face {
+                font-family: "${defaultFont.name}";
+                src: url("fonts/${defaultFont.filename}");
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // Configuration Manager
+    class ConfigManager_FWS {
+        static load() {
+            const json = localStorage.getItem('FWSConfig');
+            if (json) {
+                Object.assign(config, JSON.parse(json));
+            }
+        }
+
+        static save() {
+            localStorage.setItem('FWSConfig', JSON.stringify(config));
+        }
+    }
+
+    // Load saved config on game start
+    const _Scene_Boot_start = Scene_Boot.prototype.start;
+    Scene_Boot.prototype.start = function() {
+        _Scene_Boot_start.call(this);
+        ConfigManager_FWS.load();
+    };
+
+    // Font configuration scene
+    class Scene_FontConfig extends Scene_MenuBase {
+        create() {
+            super.create();
+            this._configWindow = new Window_FontConfig(this.configRect());
+            this.addWindow(this._configWindow);
+        }
+
+        configRect() {
+            const ww = 400;
+            const wh = this.calcWindowHeight(6, true);
+            const wx = (Graphics.boxWidth - ww) / 2;
+            const wy = (Graphics.boxHeight - wh) / 2;
+            return new Rectangle(wx, wy, ww, wh);
+        }
+    }
+
+    // Font configuration window
+    class Window_FontConfig extends Window_Command {
+        makeCommandList() {
+            this.addCommand("Font: " + config.fontFace, 'font');
+            this.addCommand("Size: " + config.fontSize, 'size');
+            this.addCommand("Damage Color: " + config.damageColor, 'damageColor');
+            this.addCommand("Healing Color: " + config.healingColor, 'healingColor');
+            this.addCommand("Save", 'save');
+            this.addCommand("Cancel", 'cancel');
+        }
+
+        drawItem(index) {
+            const rect = this.itemLineRect(index);
+            const align = this.itemTextAlign();
+            this.resetTextColor();
+            this.changePaintOpacity(this.isCommandEnabled(index));
+            this.drawText(this.commandName(index), rect.x, rect.y, rect.width, align);
+        }
+
+        processOk() {
+            const symbol = this.currentSymbol();
+            switch (symbol) {
+                case 'font': this.changeFont(); break;
+                case 'size': this.changeSize(); break;
+                case 'damageColor': this.changeColor('damage'); break;
+                case 'healingColor': this.changeColor('healing'); break;
+                case 'save': this.saveConfig(); break;
+                case 'cancel': this.cancelConfig(); break;
+            }
+        }
+
+        changeFont() {
+            const index = availableFonts.findIndex(f => f.name === config.fontFace);
+            config.fontFace = availableFonts[(index + 1) % availableFonts.length].name;
+            this.refresh();
+        }
+
+        changeSize() {
+            config.fontSize = ((config.fontSize % 72) + 1);
+            this.refresh();
+        }
+
+        changeColor(type) {
+            const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'];
+            const currentColor = type === 'damage' ? config.damageColor : config.healingColor;
+            const index = (colors.indexOf(currentColor) + 1) % colors.length;
+            if (type === 'damage') {
+                config.damageColor = colors[index];
+            } else {
+                config.healingColor = colors[index];
+            }
+            this.refresh();
+        }
+
+        saveConfig() {
+            ConfigManager_FWS.save();
+            console.log("Config saved:", config);
+            SceneManager.pop();
+        }
+
+        cancelConfig() {
+            SceneManager.pop();
+        }
+    }
+
+    // Override the displayDamage method
+    const _Window_BattleLog_displayDamage = Window_BattleLog.prototype.displayDamage;
+    Window_BattleLog.prototype.displayDamage = function(target) {
+        if (target.result().missed || target.result().evaded) {
+            _Window_BattleLog_displayDamage.call(this, target);
+            return;
+        }
+
+        const result = target.result();
+        const damage = result.hpDamage;
+        if (damage > 0) {
+            this.push('performDamage', target);
+        }
+        if (damage < 0) {
+            this.push('performRecovery', target);
+        }
+        this.push('addCustomDamageText', target);
+    };
+
+    Window_BattleLog.prototype.addCustomDamageText = function(target) {
+        const result = target.result();
+        const damage = result.hpDamage;
+        const isHealing = damage < 0;
+
+        const sprite = new Sprite_Damage();
+        sprite.x = target.x;
+        sprite.y = target.y - target.height;
+        sprite.setup(target);
+        this._displayDuration = config.animationDuration;
+
+        // Customize the damage sprite
+        sprite.bitmap.fontFace = config.fontFace;
+        sprite.bitmap.fontSize = config.fontSize;
+        sprite.bitmap.textColor = isHealing ? config.healingColor : config.damageColor;
+
+        // Add custom animation
+        sprite.dy = -1;  // Move upwards faster
+        sprite.ry = 0;   // Rotation
+        sprite.scale.x = 0.5;  // Start small
+        sprite.scale.y = 0.5;
+
+        this.parent.addChild(sprite);
+        this._damages.push(sprite);
+    };
+
+    // Enhance damage sprite animation
+    const _Sprite_Damage_update = Sprite_Damage.prototype.update;
+    Sprite_Damage.prototype.update = function() {
+        _Sprite_Damage_update.call(this);
+        if (this.ry === undefined) this.ry = 0;
+        this.ry += 0.1;
+        this.rotation = Math.sin(this.ry) * 0.2;
+        
+        // Grow to full size
+        if (this.scale.x < 1) {
+            this.scale.x += 0.05;
+            this.scale.y += 0.05;
+        }
+        
+        // Fade out near the end of animation
+        if (this._duration < 10) {
+            this.opacity -= 25;
+        }
+    };
+
+})();
